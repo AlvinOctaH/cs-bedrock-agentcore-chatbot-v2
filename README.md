@@ -16,6 +16,10 @@ By the end of the project your agent will be able to:
 - Calculate exact loyalty discounts using a secure code sandbox
 - Navigate websites to fetch live information
 
+> 💡 This copy of the instructions has been annotated with **⚠️ Gotcha** call-outs
+> at each step where a real implementation ran into trouble, so a fresh build
+> can go straight through without repeating the same mistakes.
+
 ---
 
 ## Learning Objectives
@@ -59,7 +63,7 @@ After completing this project you will be able to:
 
 Enable the following models in the Amazon Bedrock console under **Model access**:
 
-- **Amazon Nova Lite** (`amazon.nova-lite-v1:0`)
+- **Amazon Nova Lite** (or the current Nova Lite generation available in your account — `main.py` pins the exact `model_id`)
 
 ---
 
@@ -71,6 +75,9 @@ project/
 ├── RUBRIC.md                ← grading criteria
 ├── starter/
 │   ├── main.py              ← your starting point (fill in the TODOs)
+│   ├── README.md             ← submission overview + links to test evidence
+│   ├── screenshots/          ← test 1-6 evidence
+│   ├── REFLECTION.md         ← written reflection
 │   └── lambda/
 │       ├── order_tracker.py     ← provided; deploy as-is
 │       └── refund_processor.py  ← provided; deploy as-is
@@ -107,12 +114,15 @@ uv add bedrock-agentcore bedrock-agentcore-starter-toolkit
 
 The two Lambda functions (`order_tracker.py` and `refund_processor.py`) are provided in `starter/lambda/`. Deploy them to AWS Lambda before proceeding.
 
-1. In the AWS Lambda console, create two new functions (Python 3.12 runtime):
+1. In the AWS Lambda console, create two new functions (Python 3.12+ runtime):
    - `order-tracker`
    - `refund-processor`
 2. Paste the contents of each file into the inline code editor (or zip and upload).
 3. Attach an execution role with basic Lambda permissions (CloudWatch Logs).
 4. Note the ARN of each function — you will need them in the next step.
+5. **Do not modify these two files.** They are pre-built backend infrastructure the
+   agent calls as external tools — the project is about integrating with them
+   correctly, not changing their behavior.
 
 ### Step 1.3 — Set Up the AgentCore Gateway
 
@@ -142,6 +152,18 @@ npx @modelcontextprotocol/inspector
 # Connect to your Gateway URL and confirm all tools are listed.
 ```
 
+> ⚠️ **Gotcha — connecting `MCPClient` to the Gateway.** `MCPClient` does not
+> take a `gateway_url=` kwarg, and you don't need to open your own
+> `async with streamable_http_client(...)` block. Construct it with a
+> **transport factory** instead, and call the async `load_tools()`:
+> ```python
+> mcp_link = MCPClient(lambda: streamable_http_client(GATEWAY_URL))
+> gateway_tools = await mcp_link.load_tools()
+> ```
+> Getting this wrong shows up as `MCP Gateway target could not load tools
+> dynamically` in the logs, with both Gateway tools silently missing from
+> the agent's tool list.
+
 ### Step 1.4 — Create the Knowledge Base
 
 1. Upload `solution/product_catalog.txt` to an **S3 bucket** in your account.
@@ -149,7 +171,7 @@ npx @modelcontextprotocol/inspector
    - Name: `CustomerSupportKB`
    - Data source: the S3 bucket from above
    - Embeddings model: Amazon Titan Embeddings v2
-   - Vector store: Amazon OpenSearch Serverless (auto-created)
+   - Vector store: Amazon OpenSearch Serverless (auto-created), **or** a Bedrock-managed vector store
 3. **Sync** the data source.
 4. Copy the **Knowledge Base ID** — paste it into `KB_ID` in your `main.py`.
 
@@ -159,6 +181,24 @@ npx @modelcontextprotocol/inspector
 # Query: "What is the return policy for electronics?"
 # Expected: 15-day return window for electronics
 ```
+
+> ⚠️ **Gotcha — wrong or stale `KB_ID`.** If `Retrieve` fails with
+> `ResourceNotFoundException`, double-check the ID against what's actually
+> live in your account:
+> ```bash
+> aws bedrock-agent list-knowledge-bases --region us-east-1
+> ```
+>
+> ⚠️ **Gotcha — `vectorSearchConfiguration is not supported for managed
+> knowledge bases`.** Check the KB type first:
+> ```bash
+> aws bedrock-agent get-knowledge-base --knowledge-base-id <id> --region us-east-1
+> ```
+> If `knowledgeBaseConfiguration.type` is `MANAGED`, your `retrieve()` call
+> must use `retrievalConfiguration={"managedSearchConfiguration": {"numberOfResults": 3}}`,
+> not `vectorSearchConfiguration`. Getting this wrong makes `search_knowledge_base`
+> silently fall back to canned text instead of a real KB answer — it still
+> "works" from the user's point of view, which is exactly why it's easy to miss.
 
 ### Step 1.5 — Create the AgentCore Memory Resource
 
@@ -172,6 +212,51 @@ npx @modelcontextprotocol/inspector
    | User preference | `customer_preferences` | `cs_agent/{actorId}/preferences` |
 
 3. Copy the **Memory ID** — paste it into `MEMORY_ID` in your `main.py`.
+
+> ⚠️ **Gotcha — `get_memory_strategies()` / `retrieve_memories()` response
+> shapes.** Both return a **list** directly, not a dict wrapper — code like
+> `response.get("strategies", [])` or `resp.get("memories", [])` will crash
+> with `'list' object has no attribute 'get'`. Each strategy dict has `type`
+> and `namespaces`/`namespaceTemplates` (a list — take `[0]`); each memory
+> record is shaped `{"content": {"text": "..."}, ...}`. Also use the SDK's
+> real keyword names — `memory_id`/`namespace`/`query`/`top_k`, not
+> `memoryId`/`topK`.
+>
+> ⚠️ **Gotcha — `create_event()` signature.** There is no `namespace`
+> parameter. Call it as:
+> ```python
+> memory_client.create_event(
+>     memory_id=..., actor_id=..., session_id=...,
+>     messages=[(customer_query, "USER"), (agent_response, "ASSISTANT")],
+> )
+> ```
+
+### Step 1.6 — Grant the Deployed Agent's Execution Role the Permissions It Actually Needs
+
+> ⚠️ **Gotcha — everything works locally, then fails silently once deployed.**
+> Local testing runs under your own broad AWS credentials. The agent's actual
+> execution role (`AmazonBedrockAgentCoreSDKRuntime-<region>-<suffix>`,
+> created the first time you run `agentcore deploy`) starts with **no
+> permissions beyond what the toolkit auto-grants**: logs, X-Ray, model
+> invocation, whichever memory resource the toolkit itself created, and Code
+> Interpreter. It will silently throw `AccessDeniedException` on anything
+> else — and because `@tool` functions in this project have graceful
+> fallbacks, the agent keeps answering with plausible-looking (but fake)
+> data instead of visibly failing.
+>
+> Before trusting a "working" cloud test, check the deployed agent's logs:
+> ```bash
+> aws logs tail /aws/bedrock-agentcore/runtimes/<agent>-DEFAULT --since 1h
+> ```
+> Then extend the execution role's inline policy to explicitly cover every
+> resource the agent calls that isn't covered by the toolkit's defaults:
+> - `bedrock-agentcore:{GetMemory,CreateEvent,RetrieveMemoryRecords,...}` on
+>   the **exact** Memory resource ARN in `MEMORY_ID` (if it differs from
+>   whichever memory the toolkit auto-created and already granted).
+> - `bedrock:Retrieve` on the Knowledge Base ARN.
+> - Browser tool session actions — `StartBrowserSession`, `StopBrowserSession`,
+>   `GetBrowserSession`, `ListBrowserSessions`, `ConnectBrowserAutomationStream`,
+>   `GetBrowser`, `ListBrowsers` — scoped to `browser/aws.browser.v1`.
 
 ---
 
@@ -194,6 +279,9 @@ Implement `search_knowledge_base(query)`:
 - Call the Bedrock Knowledge Base Retrieve API
 - Join result chunks with `"\n---\n"`
 
+See the KB gotchas under Step 1.4 above (`managedSearchConfiguration` vs.
+`vectorSearchConfiguration`, and verifying `KB_ID`).
+
 **Test:**
 ```bash
 agentcore invoke '{"prompt": "Is the Kindle Paperwhite waterproof?"}'
@@ -206,12 +294,46 @@ Implement `MemoryHook` with two methods:
 - `retrieve_customer_context` — query all memory namespaces and prepend results to the user message
 - `save_support_interaction` — save the completed (user, assistant) turn after each response
 
+> ⚠️ **Gotcha — hooks never fire.** Pass hooks into the `Agent(...)`
+> constructor, not by assigning `agent.hooks` afterward:
+> ```python
+> agent = Agent(model=model, tools=tools_list, system_prompt=system_prompt, hooks=[memory_hook])
+> ```
+> Hook registration only happens during `Agent.__init__`; setting
+> `agent.hooks = registry` after construction silently does nothing.
+>
+> ⚠️ **Gotcha — hooks fire but never read/save anything.** `event.agent.messages`
+> items are **plain dicts** in Bedrock Converse format —
+> `{"role": "user"/"assistant", "content": [{"text": "..."}]}` for text, or
+> `{"toolUse": {...}}` / `{"toolResult": {...}}` for tool calls — not
+> objects. `getattr(msg, "role", ...)` and `hasattr(msg, "tool_call_id")`
+> silently return nothing useful. Write small dict-aware helpers instead —
+> one to pull text out of the `content` blocks, one to detect whether a
+> message is a tool call/result rather than plain text — and use those in
+> both `retrieve_customer_context` and `save_support_interaction`.
+
 ### Section 4 — Loyalty Discount Tool (Code Interpreter)
 
 Implement `calculate_loyalty_discount(loyalty_points, tier, order_total, product_category)`:
 - Build a Python code string containing the discount logic
 - Execute it with `code_session()` and return the JSON result
 - Include a fallback for when the Code Interpreter is unavailable
+
+> ⚠️ **Gotcha — `CodeInterpreter.invoke() got an unexpected keyword argument
+> 'code'`.** `session.invoke(method, params)` takes the method name and
+> **one params dict**, not separate `code=`/`language=`/`clearContext=`
+> kwargs:
+> ```python
+> resp = session.invoke("executeCode", {"code": code, "language": "python", "clearContext": True})
+> ```
+> The result is an event stream, not a plain dict — read stdout from it:
+> ```python
+> for event in resp["stream"]:
+>     structured = event.get("result", {}).get("structuredContent", {})
+>     stdout_output = structured.get("stdout", stdout_output)
+> ```
+> Skipping this makes the tool *always* hit its fallback path, even though
+> nothing looks obviously broken from the agent's replies.
 
 **Test:**
 ```bash
@@ -226,7 +348,30 @@ Implement the `invoke(payload, context)` function:
 - Connect to the Gateway via `MCPClient` and load gateway tools
 - Build the `Agent` with all tools and hooks and return its response
 
+> ⚠️ **Gotcha — browser tool crashes with `Timeout should be used inside a
+> task`.** Calling the agent synchronously (`agent(prompt)`) from inside the
+> async `invoke()` entrypoint breaks anyio's task-scoped timeouts used by the
+> browser tool. Since `invoke()` is already `async def`, call the agent the
+> same way:
+> ```python
+> agent_response = await agent.invoke_async(str(enriched_user_input))
+> ```
+>
+> ⚠️ **Gotcha — refund amount comes back as `$0`.** The agent has no way to
+> know an order's real price unless it looks it up — `amount` is an
+> *optional* field in the refund tool's schema, so the model can (and will)
+> omit it. Add explicit guidance to the system prompt: look up the order
+> first (e.g. via a `get_order` tool) and pass its real total as the refund
+> amount, rather than guessing or leaving it out. Don't try to "fix" this by
+> changing the Lambda — it's pre-built backend infrastructure (Step 1.2).
+
 ### Section 6 — Deploy to AgentCore
+
+> ⚠️ **Gotcha — local CLI testing hangs / does nothing.** The bottom of
+> `main.py` runs `app.run()` (an ASGI server, for deployment) by default.
+> For `uv run main.py '{...}'` to work, comment out `app.run()` and
+> uncomment `main()` — then **revert it before deploying**, since
+> `agentcore deploy` requires `app.run()` to be active.
 
 ```bash
 # Configure the AgentCore CLI (first time only)
@@ -238,6 +383,10 @@ agentcore deploy
 # Invoke the deployed agent
 agentcore invoke '{"prompt": "Hello, what can you help me with?", "customer_id": "CUST-123", "session_id": "test-1"}'
 ```
+
+If a tool that worked locally stops working once deployed (or degrades to
+its fallback), see the **Step 1.6** gotcha above before assuming it's a code
+bug — check the execution role's permissions first.
 
 ---
 
@@ -256,7 +405,7 @@ agentcore invoke '{"prompt": "Can you track order ORD-001?", "customer_id": "CUS
 
 ```bash
 agentcore invoke '{"prompt": "I want to return my Kindle Paperwhite (ORD-002). Please initiate a refund.", "customer_id": "CUST-123", "session_id": "t2"}'
-# Expected: refund ID, APPROVED status, 3-5 business days message
+# Expected: refund ID, APPROVED status, real order total as the refund amount, 3-5 business days message
 ```
 
 ### Test 3 — Knowledge Base (RAG)
@@ -277,6 +426,9 @@ agentcore invoke '{"prompt": "Do you remember my name and communication preferen
 # Expected: agent recalls "Jane" and "concise responses"
 ```
 
+Long-term extraction runs asynchronously — if session B doesn't recall
+anything yet, wait ~30-90 seconds after session A before invoking session B.
+
 ### Test 5 — Loyalty Discount Calculation
 
 ```bash
@@ -293,25 +445,29 @@ agentcore invoke '{"prompt": "Go to https://www.amazon.com and tell me the page 
 
 ---
 
-## Part 4 — CloudWatch Monitoring
+## Part 4 — CloudWatch Monitoring (optional)
+
+> This part is **not required by the current grading rubric** (see
+> Submission Checklist below) — it's kept here as a good production
+> practice if you want to go further, not as a submission requirement.
 
 1. In the AWS console, navigate to **CloudWatch** → **Log Groups**.
 2. Find the log group for your AgentCore Runtime (named after your deployment).
 3. Create a **metric filter** on `ERROR` log entries.
 4. Create a **CloudWatch Alarm** that triggers when the error count exceeds 5 in a 5-minute window.
-5. Take a screenshot of the alarm configuration and include it in your submission.
 
 ---
 
 ## Submission Checklist
 
-- [ ] `main.py` with all TODOs completed
-- [ ] Screenshots or terminal output for all 6 test scenarios
-- [ ] Screenshot of the CloudWatch alarm configuration
-- [ ] Brief written reflection (200–400 words) covering:
-  - One design decision you made and why
-  - One challenge you encountered and how you solved it
-  - How you would extend this agent for a production environment
+- [ ] Completed `main.py` with all TODO sections implemented (no `pass` or `None` placeholders remaining)
+- [ ] Screenshots or terminal output for Test 1 — Order Tracking
+- [ ] Screenshots or terminal output for Test 2 — Refund Processing
+- [ ] Screenshots or terminal output for Test 3 — Knowledge Base (RAG)
+- [ ] Screenshots or terminal output for Test 4 — Long-Term Memory (both sessions)
+- [ ] Screenshots or terminal output for Test 5 — Loyalty Discount Calculation
+- [ ] Screenshots or terminal output for Test 6 — Browser Tool
+- [ ] Written reflection (200–400 words) covering a design decision, a challenge, and a production consideration
 
 ---
 

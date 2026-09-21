@@ -26,22 +26,38 @@ Revert the toggle before deploying (`app.run()` must be active for `agentcore de
 ## Test evidence
 
 Screenshots for all 6 test scenarios (`agentcore invoke` against the deployed
-agent) are in [`screenshots/`](./screenshots):
+agent) — full-size originals are in [`screenshots/`](./screenshots).
 
-1. [Order tracking](./screenshots/test_1_order_tracking.png)
-2. [Refund processing](./screenshots/test_2_refund_processing.png)
-3. [Knowledge base RAG](./screenshots/test_3_knowledge_base_rag.png)
-4. Long-term memory recall — [session A](./screenshots/test_4a_memory_session_A.png) / [session B](./screenshots/test_4b_memory_session_B.png)
-5. [Loyalty discount calculator](./screenshots/test_5_loyalty_discount.png)
-6. [Browser tool](./screenshots/test_6_browser_tool.png)
+### Test 1 — Order Tracking
+![Order tracking](./screenshots/test_1_order_tracking.png)
+
+### Test 2 — Refund Processing
+![Refund processing](./screenshots/test_2_refund_processing.png)
+
+### Test 3 — Knowledge Base (RAG)
+![Knowledge base RAG](./screenshots/test_3_knowledge_base_rag.png)
+
+### Test 4 — Long-Term Memory (both sessions)
+Session A (introduce name + preference):
+![Memory session A](./screenshots/test_4a_memory_session_A.png)
+
+Session B (recall, new session):
+![Memory session B](./screenshots/test_4b_memory_session_B.png)
+
+### Test 5 — Loyalty Discount Calculation
+![Loyalty discount calculator](./screenshots/test_5_loyalty_discount.png)
+
+### Test 6 — Browser Tool
+![Browser tool](./screenshots/test_6_browser_tool.png)
 
 ## Reflection
 
 See [`REFLECTION.md`](./REFLECTION.md) — 200-400 word write-up covering a
 design decision, a challenge encountered, and a production consideration.
 
-## Troubleshooting / setup notes
+## Building this from scratch
 
-See [`TROUBLESHOOTING.md`](./TROUBLESHOOTING.md) for the errors hit while
-building this (bad `KB_ID`, wrong Gateway/Memory API usage, IAM permission
-gaps in the deployed runtime, etc.) and how to avoid them from a fresh setup.
+See the [project README](../README.md) — it's the full step-by-step guide
+(AWS console setup + `main.py` TODOs), with a **⚠️ Gotcha** note inlined at
+every step that caused a real error while building this submission, so a
+fresh build shouldn't hit the same ones.

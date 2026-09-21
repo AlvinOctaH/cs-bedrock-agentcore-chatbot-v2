@@ -32,7 +32,7 @@ agents:
     bedrock_agentcore:
       agent_id: ecommerce_support_agent-eQITQD50QI
       agent_arn: arn:aws:bedrock-agentcore:us-east-1:029008290211:runtime/ecommerce_support_agent-eQITQD50QI
-      agent_session_id: 9f2aad67-5f99-4ee2-ad6c-a338dd195d41
+      agent_session_id: null
     codebuild:
       project_name: null
       execution_role: null
