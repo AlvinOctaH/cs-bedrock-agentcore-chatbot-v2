@@ -1,7 +1,20 @@
 # E-commerce Support Agent — Submission
 
+**Udacity — AWS AI Engineering Nanodegree — Course 2**
+
 Implementation of the customer support AI agent described in the project
-README (repo root), built on Amazon Bedrock AgentCore.
+README (repo root), built on Amazon Bedrock AgentCore. The official
+starter/instructions repository this project is based on is here:
+`https://github.com/udacity/cd14763-project-starter`
+
+## Architecture
+
+- **Amazon Bedrock AgentCore Runtime** — hosts the agent (`BedrockAgentCoreApp`, deployed via `agentcore deploy`), model: Amazon Nova Lite
+- **AgentCore Gateway (MCP)** — exposes two Lambda-backed tools: `order-tracker` (API Gateway proxy) and `refund-processor` (direct Lambda)
+- **Amazon Bedrock Knowledge Base** — RAG over the product catalog and support policies
+- **AgentCore Memory** — cross-session semantic facts + user preferences, via a custom `MemoryHook`
+- **AgentCore Code Interpreter** — sandboxed execution of the loyalty discount calculation
+- **AgentCore Browser** — live web page retrieval
 
 ## What's implemented in `main.py`
 
@@ -49,6 +62,18 @@ Session B (recall, new session):
 
 ### Test 6 — Browser Tool
 ![Browser tool](./screenshots/test_6_browser_tool.png)
+
+### Evidence index
+
+| # | File | What it shows |
+|---|---|---|
+| 1 | `screenshots/test_1_order_tracking.png` | Order status, tracking number, and carrier returned via the `order-tracker` Gateway tool |
+| 2 | `screenshots/test_2_refund_processing.png` | Refund approved via the `refund-processor` Gateway tool, with the real order total as the refund amount |
+| 3 | `screenshots/test_3_knowledge_base_rag.png` | Platinum loyalty tier benefits answered from the live Knowledge Base |
+| 4 | `screenshots/test_4a_memory_session_A.png` | Session A: customer introduces their name and a preference |
+| 5 | `screenshots/test_4b_memory_session_B.png` | Session B (separate session, same customer ID): agent recalls the name and preference from session A |
+| 6 | `screenshots/test_5_loyalty_discount.png` | Points redemption and tier discount computed via the Code Interpreter sandbox |
+| 7 | `screenshots/test_6_browser_tool.png` | Live page title retrieved via the Browser tool |
 
 ## Reflection
 
