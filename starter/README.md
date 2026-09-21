@@ -37,4 +37,11 @@ agent) are in [`screenshots/`](./screenshots):
 
 ## Reflection
 
-See [`REFLECTION.md`](./REFLECTION.md).
+See [`REFLECTION.md`](./REFLECTION.md) — 200-400 word write-up covering a
+design decision, a challenge encountered, and a production consideration.
+
+## Troubleshooting / setup notes
+
+See [`TROUBLESHOOTING.md`](./TROUBLESHOOTING.md) for the errors hit while
+building this (bad `KB_ID`, wrong Gateway/Memory API usage, IAM permission
+gaps in the deployed runtime, etc.) and how to avoid them from a fresh setup.
