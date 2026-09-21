@@ -348,6 +348,48 @@ consideration.
 
 ---
 
+## Rubric Mapping
+
+Where to look in this repo for each grading criterion.
+
+### Agent Deployment & Tool Integration
+
+| Criterion | Where to find it |
+|---|---|
+| `BedrockAgentCoreApp` instance at module level | `starter/main.py:52` |
+| Async `invoke` function with `@app.entrypoint` | `starter/main.py:432-433` |
+| `app.run()` as main entry point | `starter/main.py:543` |
+| Test output: `agentcore invoke` with no errors | Any screenshot in `starter/screenshots/`, e.g. `test_1_order_tracking.png` |
+| `MCPClient` connects to Gateway, loads tools | `starter/main.py:456-461` (`invoke()`, Step 5) |
+| ≥2 distinct Gateway-backed tools invoked, well-formed responses | `starter/screenshots/test_1_order_tracking.png` (`order-tracker`, API-based) and `test_2_refund_processing.png` (`refund-processor`, Lambda-based) |
+
+### Agent Intelligence
+
+| Criterion | Where to find it |
+|---|---|
+| `search_knowledge_base` tool, `@tool` decorator, calls Retrieve, joins chunks, guard clause, docstring | `starter/main.py:261-297` |
+| `get_namespaces` fetches strategy types/namespaces | `starter/main.py:106-122` |
+| `MemoryHook(HookProvider)` with `register_hooks` | `starter/main.py:169-243` |
+| `retrieve_customer_context` — queries namespaces, tags by strategy, prepends to message | `starter/main.py:180-208` |
+| `save_support_interaction` — extracts last turn, calls `create_event()` | `starter/main.py:210-239` |
+| Cross-session recall test log (two sessions, same customer ID) | `starter/screenshots/test_4a_memory_session_A.png` + `test_4b_memory_session_B.png` |
+| `calculate_loyalty_discount` tool, business rules, `code_session(...).invoke("executeCode", ...)` with `clearContext=True`, fallback, structured result (`points_redeemed`, `tier_discount_pct`, `final_total`, `remaining_points`) | `starter/main.py:317-413` |
+| `AgentCoreBrowser` instantiated with region, added to tools list | `starter/main.py:452, 455` |
+| Test output: agent retrieves content from a live page | `starter/screenshots/test_6_browser_tool.png` |
+
+### Code Quality & Reflection
+
+| Criterion | Where to find it |
+|---|---|
+| Written reflection, 200-400 words, design decision + challenge + production consideration | [`starter/REFLECTION.md`](./starter/REFLECTION.md) |
+
+### Stand-out suggestions implemented
+
+| Suggestion | Where to find it |
+|---|---|
+| Structured output validation (Pydantic) | `DiscountOutputSchema` in `starter/main.py:317-321`, validated in `calculate_loyalty_discount` |
+| Conversation summarization | `starter/main.py` `invoke()`, message-history truncation block (search `Condensing conversational state`) |
+
 ## Submission Checklist
 
 - [x] Completed `main.py` with all TODO sections implemented (no `pass` or `None` placeholders remaining)
