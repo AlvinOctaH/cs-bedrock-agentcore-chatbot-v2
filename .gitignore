@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+
+# AgentCore local build artifacts (large, regenerated on deploy)
+starter/.bedrock_agentcore/
+
+# Local scratch files
+starter/iam_policy_update.json
+
+# OS
+.DS_Store
