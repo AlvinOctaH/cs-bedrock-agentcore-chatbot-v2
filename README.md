@@ -1,411 +1,252 @@
-# Project: Building a Production-Grade Customer Support AI Agent with Amazon Bedrock AgentCore
+# Project: Production-Grade Customer Support AI Agent with Amazon Bedrock AgentCore
 
-**Udacity — AWS AI Engineering Nanodegree — Course 2**
+**Udacity — AWS Agentic AI Nanodegree — Course 2 Project**
+
+> **Status:** complete · all 6 functional tests passing on the deployed agent ·
+> stand-out extensions · full rebuild guide in [`docs/`](docs/00-overview.md)
+
+## Contents
+
+1. [Overview](#overview)
+2. [Architecture](#architecture)
+3. [Project Structure](#project-structure)
+4. [Quick Start](#quick-start)
+5. [Step-by-Step Build](#step-by-step-build)
+6. [Testing & Evidence](#testing--evidence)
+7. [Stand-out Extensions](#stand-out-extensions)
+8. [Rubric Mapping](#rubric-mapping)
+9. [Submission Checklist](#submission-checklist)
+10. [Study Notes](#study-notes)
+11. [Clean Up](#clean-up-after-grading)
+12. [References](#references)
 
 ---
 
 ## Overview
 
-A fully functional, production-ready AI customer support agent for a fictional Amazon store, built on **Amazon Bedrock AgentCore**.
+A production-ready AI customer support agent for a fictional Amazon-style store, built
+with the **Strands Agents SDK** and deployed on **Amazon Bedrock AgentCore Runtime**.
 
 The agent can:
 
-- Answer questions about products, return policies, and loyalty rewards using Retrieval-Augmented Generation (RAG)
-- Look up order status and process refunds by calling Lambda functions through the AgentCore Gateway
-- Remember customer preferences and conversation history across multiple sessions
-- Calculate exact loyalty discounts using a secure code sandbox
-- Navigate websites to fetch live information
+- answer questions about products, return policies and loyalty rewards with **RAG** over a Bedrock Knowledge Base
+- **look up orders and process refunds** through Lambda functions exposed by the **AgentCore Gateway (MCP)**
+- **remember customers** (facts and preferences) across sessions with **AgentCore Memory**
+- calculate exact **loyalty discounts** in the secure **AgentCore Code Interpreter**
+- read **live web pages** with the **AgentCore Browser**
 
 ## Architecture
 
-- **Amazon Bedrock AgentCore Runtime** — hosts the agent (`BedrockAgentCoreApp`, deployed via `agentcore deploy`), model: Amazon Nova Lite
-- **AgentCore Gateway (MCP)** — exposes two Lambda-backed tools: `order-tracker` (API Gateway proxy) and `refund-processor` (direct Lambda)
-- **Amazon Bedrock Knowledge Base** — RAG over the product catalog and support policies
-- **AgentCore Memory** — cross-session semantic facts + user preferences, via a custom `MemoryHook`
-- **AgentCore Code Interpreter** — sandboxed execution of the loyalty discount calculation
-- **AgentCore Browser** — live web page retrieval
+```
+Customer ── agentcore invoke ──► AgentCore Runtime (BedrockAgentCoreApp, starter/main.py)
+                                   │  Strands Agent · Amazon Nova 2 Lite · hooks=[MemoryHook]
+      ┌────────────────┬───────────┼────────────────┬──────────────────┐
+      ▼                ▼           ▼                ▼                  ▼
+ AgentCore Gateway   Bedrock     AgentCore       AgentCore Code     AgentCore
+ (MCP)               Knowledge   Memory          Interpreter        Browser
+  ├─ order-tracker   Base (RAG)  facts +         loyalty discount   live web
+  │  (API Gateway)   product     preferences     (sandboxed Python) pages
+  └─ refund-processor catalog    per customer
+     (direct Lambda)
+```
 
----
-
-## Prerequisites
-
-### AWS Account
-
-- An active AWS account with permission to create and manage:
-  - IAM roles and policies
-  - Lambda functions
-  - API Gateway REST APIs
-  - Amazon Bedrock Knowledge Bases (with S3 access)
-  - Amazon Bedrock AgentCore resources (Runtime, Gateway, Memory)
-  - Amazon CloudWatch
-- All resources should be created in **us-east-1** (N. Virginia) unless stated otherwise.
-
-### Local Development Environment
-
-| Tool | Version |
-|------|---------|
-| Python | 3.14+ |
-| [uv](https://docs.astral.sh/uv/) | Latest |
-| AWS CLI | v2 |
-| AgentCore CLI (`agentcore`) | Installed via the starter-toolkit |
-| Node.js (for MCP Inspector) | 18+ |
-
-### Model Access
-
-Enable the current Nova Lite generation available in your account under
-**Amazon Bedrock console → Model access**. `main.py` pins the exact `model_id`.
-
----
+| Component | Role |
+|---|---|
+| **AgentCore Runtime** | Hosts the agent (`BedrockAgentCoreApp`, `@app.entrypoint`), deployed with `agentcore deploy`; model `global.amazon.nova-2-lite-v1:0` |
+| **AgentCore Gateway (MCP)** | Two Lambda-backed targets: `order-tracker` (API Gateway proxy) and `refund-processor` (direct Lambda) |
+| **Bedrock Knowledge Base** | RAG over `product_catalog.txt` (products, returns, loyalty rules, order statuses) |
+| **AgentCore Memory** | Semantic facts + user preferences per customer, via a custom `MemoryHook` |
+| **Code Interpreter** | Exact loyalty-discount arithmetic in a sandbox, validated with Pydantic |
+| **Browser** | Live web page retrieval |
 
 ## Project Structure
 
 ```
-project/
-├── README.md                 ← this file
-├── starter/
-│   ├── main.py                ← the agent implementation
-│   ├── REFLECTION.md          ← written reflection
-│   ├── screenshots/           ← test 1-6 evidence
-│   └── lambda/
-│       ├── order_tracker.py     ← provided; deploy as-is, do not modify
-│       └── refund_processor.py  ← provided; deploy as-is, do not modify
-└── solution/                 ← reference implementation (do not copy)
+cs-bedrock-agentcore-chatbot-v2/
+├── README.md                       ← this file
+├── REFLECTION.md                   ← design decision, challenge, production consideration
+├── docs/                           ← step-by-step rebuild guide (00-overview … 10-troubleshooting)
+├── screenshots/                    ← test 1–6 evidence
+└── starter/
+    ├── main.py                     ← ⭐ the agent implementation (all TODOs)
+    ├── product_catalog.txt         ← Knowledge Base source document
+    ├── lambda/
+    │   ├── order_tracker.py        ← provided; deploy as-is
+    │   ├── refund_processor.py     ← provided; deploy as-is
+    │   └── lambda_schema           ← refund tool schema for the Gateway target
+    ├── .bedrock_agentcore.yaml     ← AgentCore deployment record
+    ├── pyproject.toml / uv.lock    ← dependencies
 ```
 
 ---
 
-## Part 1 — AWS Infrastructure Setup
+## Quick Start
 
-Complete these steps **before** writing any agent code.
-
-### Step 1.1 — Project Initialisation
+For someone running it for the first time (full explanation in [`docs/`](docs/00-overview.md)):
 
 ```bash
-uv init customer-support-agent
-cd customer-support-agent
-uv add strands-agents strands-agents-tools
-uv add bedrock-agentcore bedrock-agentcore-starter-toolkit
-```
+# 0. Tools: Python 3.14+, uv, AWS CLI v2 (us-east-1), Node.js 18+; enable Nova Lite model access
+cd starter && uv sync
 
-### Step 1.2 — Deploy the Lambda Functions
+# 1. Infrastructure (AWS Console)                        → docs/02 … docs/05
+#    Lambdas (order-tracker, refund-processor) → Gateway (2 targets)
+#    → Knowledge Base on product_catalog.txt → Memory (facts + preferences)
+#    Paste GATEWAY_URL, KB_ID, MEMORY_ID into starter/main.py
 
-The two Lambda functions (`order_tracker.py` and `refund_processor.py`) are provided in `starter/lambda/`. They are pre-built backend infrastructure — deploy them as-is; the project is about integrating with them, not changing them.
-
-1. In the AWS Lambda console, create two functions (Python 3.12+ runtime): `order-tracker` and `refund-processor`.
-2. Paste the contents of each file into the inline code editor (or zip and upload).
-3. Attach an execution role with basic Lambda permissions (CloudWatch Logs).
-4. Note the ARN of each function.
-
-### Step 1.3 — Set Up the AgentCore Gateway
-
-The Gateway exposes your Lambda functions as MCP tools the agent can call.
-
-1. Open **Amazon Bedrock console → AgentCore → Gateways**.
-2. Create a new Gateway named `CustomerSupportGateway`.
-3. Add two **Lambda targets**:
-
-   | Target Name | Lambda Function | Integration |
-   |---|---|---|
-   | `order_tracker` | `order-tracker` | API Gateway REST proxy |
-   | `refund_processor` | `refund-processor` | Direct Lambda invocation |
-
-4. For `order_tracker`, configure API Gateway routes:
-   - `GET /orders/{order_id}`
-   - `GET /customers/{customer_id}/orders`
-   - `GET /customers/{customer_id}`
-5. For `refund_processor`, import the tool schema from `lambda/lambda_schema`.
-6. Copy the **Gateway URL** (ends with `/mcp`) into `GATEWAY_URL` in `main.py`.
-
-In `main.py`, connect to it with a transport factory:
-
-```python
-mcp_link = MCPClient(lambda: streamable_http_client(GATEWAY_URL))
-gateway_tools = await mcp_link.load_tools()
-tools_list.extend(gateway_tools)
-```
-
-**Verify with MCP Inspector:**
-```bash
-npx @modelcontextprotocol/inspector
-# Connect to your Gateway URL and confirm all tools are listed.
-```
-
-### Step 1.4 — Create the Knowledge Base
-
-1. Upload `product_catalog.txt` to an S3 bucket in your account.
-2. In **Bedrock console → Knowledge Bases**, create a new Knowledge Base named `CustomerSupportKB`, using that S3 bucket as the data source.
-3. **Sync** the data source.
-4. Copy the **Knowledge Base ID** into `KB_ID` in `main.py`.
-5. Confirm your account's actual KB list and its type before wiring up the tool:
-   ```bash
-   aws bedrock-agent list-knowledge-bases --region us-east-1
-   aws bedrock-agent get-knowledge-base --knowledge-base-id <id> --region us-east-1
-   ```
-
-In `search_knowledge_base`, retrieve with the configuration matching your KB's
-type — `managedSearchConfiguration` for a Bedrock-managed knowledge base,
-`vectorSearchConfiguration` for a self-managed vector store (e.g. OpenSearch Serverless):
-
-```python
-response = _bedrock_runtime.retrieve(
-    knowledgeBaseId=KB_ID,
-    retrievalQuery={"text": query},
-    retrievalConfiguration={"managedSearchConfiguration": {"numberOfResults": 3}}
-)
-```
-
-**Verify:**
-```bash
-# Bedrock console → your Knowledge Base → "Test" tab
-# Query: "What is the return policy for electronics?"
-# Expected: 15-day return window for electronics
-```
-
-### Step 1.5 — Create the AgentCore Memory Resource
-
-1. In **Bedrock console → AgentCore → Memory**, create a new Memory resource named `CustomerSupportMemory`.
-2. Add two **Memory Strategies**:
-
-   | Strategy | Name | Namespace |
-   |---|---|---|
-   | Semantic extraction | `customer_facts` | `cs_agent/{actorId}/facts` |
-   | User preference | `customer_preferences` | `cs_agent/{actorId}/preferences` |
-
-3. Copy the **Memory ID** into `MEMORY_ID` in `main.py`.
-
-Use the `MemoryClient` SDK's actual response shapes and keyword names:
-`get_memory_strategies(memory_id)` and `retrieve_memories(...)` each return a
-**list** directly (strategies have `type` + `namespaces`/`namespaceTemplates`;
-memory records are shaped `{"content": {"text": "..."}, ...}`), and
-`retrieve_memories` takes `memory_id`/`namespace`/`query`/`top_k`.
-`create_event()` has no `namespace` parameter:
-
-```python
-memory_client.create_event(
-    memory_id=..., actor_id=..., session_id=...,
-    messages=[(customer_query, "USER"), (agent_response, "ASSISTANT")],
-)
-```
-
-### Step 1.6 — Scope the Deployed Agent's IAM Execution Role
-
-The execution role `agentcore deploy` creates the first time you deploy
-(`AmazonBedrockAgentCoreSDKRuntime-<region>-<suffix>`) only auto-grants logs,
-X-Ray, model invocation, whichever memory resource the toolkit itself
-created, and Code Interpreter. Extend its inline policy to also cover:
-
-- `bedrock-agentcore:{GetMemory,CreateEvent,RetrieveMemoryRecords,...}` on the exact Memory resource ARN in `MEMORY_ID`
-- `bedrock:Retrieve` on the Knowledge Base ARN
-- Browser tool session actions — `StartBrowserSession`, `StopBrowserSession`, `GetBrowserSession`, `ListBrowserSessions`, `ConnectBrowserAutomationStream`, `GetBrowser`, `ListBrowsers` — scoped to `browser/aws.browser.v1`
-
-Verify what the deployed agent is actually doing (not just what it looks
-like locally, which runs under your own broader credentials):
-```bash
-aws logs tail /aws/bedrock-agentcore/runtimes/<agent>-DEFAULT --since 1h
-```
-
----
-
-## Part 2 — Building the Agent
-
-Open `starter/main.py` and implement each `# TODO` section in order.
-
-### Section 1 — Configuration and Initialisation
-
-Set up `BedrockAgentCoreApp`, `BedrockModel` (Nova Lite), `MemoryClient`, and the `boto3` Bedrock runtime client, using the resource IDs from Part 1.
-
-### Section 2 — Knowledge Base Tool
-
-Implement `search_knowledge_base(query)` per Step 1.4 above. Include a guard
-clause returning a descriptive fallback message when `KB_ID` isn't configured.
-
-**Test:**
-```bash
-agentcore invoke '{"prompt": "Is the Kindle Paperwhite waterproof?"}'
-```
-
-### Section 3 — Long-Term Memory Hook
-
-Implement `MemoryHook(HookProvider)`:
-- `retrieve_customer_context` — query all memory namespaces and prepend results to the user message
-- `save_support_interaction` — save the completed (user, assistant) turn after each response
-- `register_hooks` — register both on `MessageAddedEvent` / `AfterInvocationEvent`
-
-Pass it into the agent via the constructor, not by assigning afterward:
-```python
-agent = Agent(model=model, tools=tools_list, system_prompt=system_prompt, hooks=[memory_hook])
-```
-
-`event.agent.messages` items are plain dicts in Bedrock Converse format —
-`{"role": "user"/"assistant", "content": [{"text": "..."}]}` for text, or
-`{"toolUse": {...}}` / `{"toolResult": {...}}` for tool calls. Write small
-dict-aware helpers to extract text and detect tool-call messages, and use
-those inside both hook methods.
-
-### Section 4 — Loyalty Discount Tool (Code Interpreter)
-
-Implement `calculate_loyalty_discount(loyalty_points, tier, order_total, product_category)`:
-build a self-contained Python code string encoding the discount rules, run it
-in the sandbox, and include a fallback for when the sandbox is unavailable.
-
-```python
-with code_session(REGION) as session:
-    resp = session.invoke("executeCode", {"code": code, "language": "python", "clearContext": True})
-    for event in resp["stream"]:
-        structured = event.get("result", {}).get("structuredContent", {})
-        stdout_output = structured.get("stdout", stdout_output)
-```
-
-**Test:**
-```bash
-agentcore invoke '{"prompt": "I am a Gold member with 4250 points. Calculate my discount on a $150 order.", "customer_id": "CUST-123", "session_id": "s1"}'
-```
-
-### Section 5 — Main Entrypoint
-
-Implement `invoke(payload, context)`: extract `prompt`/`customer_id`/`session_id`,
-instantiate `MemoryHook` and `AgentCoreBrowser`, connect to the Gateway,
-build the `Agent` with all tools and hooks, and call it asynchronously:
-
-```python
-agent_response = await agent.invoke_async(str(enriched_user_input))
-```
-
-In the system prompt, instruct the agent to look up an order's real total
-(e.g. via a `get_order` tool) before calling `initiate_refund`, and to pass
-that as the refund amount — it's an optional field the model won't fill in
-correctly unless told to.
-
-### Section 6 — Deploy to AgentCore
-
-Before running locally with `uv run main.py '{...}'`, comment out `app.run()`
-and uncomment `main()` at the bottom of `main.py` — then revert that before
-deploying, since `agentcore deploy` requires `app.run()` to be active.
-
-```bash
-agentcore configure   # first time only
+# 2. Deploy                                              → docs/07
+agentcore configure        # first time only
 agentcore deploy
-agentcore invoke '{"prompt": "Hello, what can you help me with?", "customer_id": "CUST-123", "session_id": "test-1"}'
-```
+#    Extend the runtime role (Memory ARN, bedrock:Retrieve on the KB, browser actions)
 
-If a tool degrades to its fallback once deployed, check Step 1.6 (IAM) before
-assuming it's a code bug.
-
----
-
-## Part 3 — Functional Testing
-
-### Test 1 — Order Tracking
-```bash
+# 3. Verify                                              → docs/08
 agentcore invoke '{"prompt": "Can you track order ORD-001?", "customer_id": "CUST-123", "session_id": "t1"}'
 ```
-![Order tracking](starter/screenshots/test_1_order_tracking.png)
-
-### Test 2 — Refund Processing
-```bash
-agentcore invoke '{"prompt": "I want to return my Kindle Paperwhite (ORD-002). Please initiate a refund.", "customer_id": "CUST-123", "session_id": "t2"}'
-```
-![Refund processing](starter/screenshots/test_2_refund_processing.png)
-
-### Test 3 — Knowledge Base (RAG)
-```bash
-agentcore invoke '{"prompt": "What are the benefits of the Platinum loyalty tier?", "customer_id": "CUST-123", "session_id": "t3"}'
-```
-![Knowledge base RAG](starter/screenshots/test_3_knowledge_base_rag.png)
-
-### Test 4 — Memory (Long-Term)
-```bash
-# Session A
-agentcore invoke '{"prompt": "Hi, I am Jane. I prefer concise responses.", "customer_id": "CUST-123", "session_id": "s-A"}'
-# Wait ~30-90s for long-term extraction, then Session B (new session, same customer_id)
-agentcore invoke '{"prompt": "Do you remember my name and communication preference?", "customer_id": "CUST-123", "session_id": "s-B"}'
-```
-Session A:
-![Memory session A](starter/screenshots/test_4a_memory_session_A.png)
-
-Session B:
-![Memory session B](starter/screenshots/test_4b_memory_session_B.png)
-
-### Test 5 — Loyalty Discount Calculation
-```bash
-agentcore invoke '{"prompt": "I am a Gold member with 4250 points. Calculate my discount on a $150 standard order.", "customer_id": "CUST-123", "session_id": "t5"}'
-```
-![Loyalty discount calculator](starter/screenshots/test_5_loyalty_discount.png)
-
-### Test 6 — Browser Tool
-```bash
-agentcore invoke '{"prompt": "Go to https://www.amazon.com and tell me the page title.", "customer_id": "CUST-123", "session_id": "t6"}'
-```
-![Browser tool](starter/screenshots/test_6_browser_tool.png)
 
 ---
 
-## Reflection
+## Step-by-Step Build
 
-See [`starter/REFLECTION.md`](./starter/REFLECTION.md) — 200-400 words
-covering a design decision, a challenge encountered, and a production
-consideration.
+### Part 1 — Infrastructure (before any agent code)
+
+| Step | What | Notes |
+|---|---|---|
+| 1.1 | Project initialisation (`uv init`, `uv add strands-agents strands-agents-tools bedrock-agentcore bedrock-agentcore-starter-toolkit`) | [docs/01](docs/01-setup.md) |
+| 1.2 | Deploy `order-tracker` and `refund-processor` Lambdas as-is | [docs/02](docs/02-lambda-backends.md) |
+| 1.3 | AgentCore Gateway `CustomerSupportGateway`: `order_tracker` (API Gateway proxy, 3 GET routes) + `refund_processor` (direct Lambda, `lambda_schema`); verify with MCP Inspector | [docs/03](docs/03-gateway.md) |
+| 1.4 | Knowledge Base `CustomerSupportKB` on `product_catalog.txt`, synced; check the KB **type** (managed vs vector) | [docs/04](docs/04-knowledge-base.md) |
+| 1.5 | Memory `CustomerSupportMemory` with `customer_facts` (`cs_agent/{actorId}/facts`) and `customer_preferences` (`cs_agent/{actorId}/preferences`) | [docs/05](docs/05-memory.md) |
+| 1.6 | Scope the deployed runtime's IAM role (Memory ARN, `bedrock:Retrieve`, browser session actions) | [docs/07](docs/07-entrypoint-and-deployment.md#iam-scoping-for-the-deployed-agent) |
+
+### Part 2 — Building the Agent (`starter/main.py`)
+
+| Section | Implementation | Notes |
+|---|---|---|
+| 1 Configuration & initialisation | `BedrockAgentCoreApp`, `BedrockModel` (Nova 2 Lite), `MemoryClient`, `bedrock-agent-runtime` client | [docs/07](docs/07-entrypoint-and-deployment.md) |
+| 2 Knowledge Base tool | `search_knowledge_base` with guard clause, `managedSearchConfiguration`, grounded fallback | [docs/04](docs/04-knowledge-base.md) |
+| 3 Long-term memory hook | `MemoryHook(HookProvider)`: retrieve context on `MessageAddedEvent`, save the turn on `AfterInvocationEvent`, dict-aware message helpers | [docs/05](docs/05-memory.md) |
+| 4 Loyalty discount tool | Code string → `code_session(REGION).invoke("executeCode", {..., "clearContext": True})` → stdout from the event stream → Pydantic validation → fallback | [docs/06](docs/06-code-interpreter-and-browser.md) |
+| 5 Entrypoint | `@app.entrypoint async def invoke()`: MemoryHook, `AgentCoreBrowser`, `MCPClient(lambda: streamable_http_client(GATEWAY_URL))`, `Agent(..., hooks=[memory_hook])`, `await agent.invoke_async(...)` | [docs/07](docs/07-entrypoint-and-deployment.md) |
+| 6 Deploy | `app.run()` active → `agentcore deploy` (switch to `main()` only for local CLI tests) | [docs/07](docs/07-entrypoint-and-deployment.md) |
+
+---
+
+## Testing & Evidence
+
+All tests run against the **deployed** agent (`agentcore invoke` from `starter/`).
+Full commands: [docs/08](docs/08-testing-and-submission.md).
+
+| # | Test | Result |
+|---|---|---|
+| 1 | Order tracking — `ORD-001` | Shipped via UPS, Wireless Headphones Pro $89.99, tracking TRK987654321, ETA (Gateway → API Gateway → Lambda) |
+| 2 | Refund — Kindle Paperwhite `ORD-002` | Approved, `REF-…`, real total $139.99, 3–5 business days (Gateway → Lambda) |
+| 3 | Knowledge Base — Platinum tier benefits | Free same-day shipping, 15% discount, priority support |
+| 4 | Long-term memory — two sessions, same customer | Session B recalls "Jane" and "concise responses" |
+| 5 | Loyalty discount — Gold, 4250 pts, $150 | 10% off, 4000 pts redeemed → **$95.00**, 250 pts left |
+| 6 | Browser — udacity.com page title | "Learn the Latest Tech Skills; Advance Your Career \| Udacity" |
+
+### Test 1 — Order Tracking
+![Order tracking](screenshots/test_1_order_tracking.png)
+
+### Test 2 — Refund Processing
+![Refund processing](screenshots/test_2_refund_processing.png)
+
+### Test 3 — Knowledge Base (RAG)
+![Knowledge base RAG](screenshots/test_3_knowledge_base_rag.png)
+
+### Test 4 — Long-Term Memory
+Session A:
+![Memory session A](screenshots/test_4a_memory_session_A.png)
+
+Session B:
+![Memory session B](screenshots/test_4b_memory_session_B.png)
+
+### Test 5 — Loyalty Discount
+![Loyalty discount calculator](screenshots/test_5_loyalty_discount.png)
+
+### Test 6 — Browser Tool
+![Browser tool](screenshots/test_6_browser_tool.png)
+
+---
+
+## Stand-out Extensions
+
+| Extension | Where | Value |
+|---|---|---|
+| **Structured output validation (Pydantic)** | `DiscountOutputSchema`, `starter/main.py:317-321`, validated at `:385-387` | Sandbox output is type-checked before it reaches the model |
+| **Conversation summarisation / trimming** | `invoke()`, `starter/main.py:480-487` | Long histories are condensed to protect the token budget |
+| **Grounded fallbacks** | `search_knowledge_base` `:290-297`, `calculate_loyalty_discount` `:391-413` | Correct answers from catalog rules when KB/sandbox are blocked |
+| **Safe memory-context enrichment** | `invoke()`, `starter/main.py:489-515` | Memories prepended per namespace, each failure isolated |
+
+Details: [docs/09-standout.md](docs/09-standout.md).
 
 ---
 
 ## Rubric Mapping
 
-Where to look in this repo for each grading criterion.
+Line numbers refer to `starter/main.py`.
 
 ### Agent Deployment & Tool Integration
 
-| Criterion | Where to find it |
+| Criterion | Where |
 |---|---|
-| `BedrockAgentCoreApp` instance at module level | `starter/main.py:52` |
-| Async `invoke` function with `@app.entrypoint` | `starter/main.py:432-433` |
-| `app.run()` as main entry point | `starter/main.py:543` |
-| Test output: `agentcore invoke` with no errors | Any screenshot in `starter/screenshots/`, e.g. `test_1_order_tracking.png` |
-| `MCPClient` connects to Gateway, loads tools | `starter/main.py:456-461` (`invoke()`, Step 5) |
-| ≥2 distinct Gateway-backed tools invoked, well-formed responses | `starter/screenshots/test_1_order_tracking.png` (`order-tracker`, API-based) and `test_2_refund_processing.png` (`refund-processor`, Lambda-based) |
+| `BedrockAgentCoreApp` instance at module level | `:52` |
+| Async `invoke` function with `@app.entrypoint` | `:432-433` |
+| `app.run()` as main entry point | `:543` |
+| Test output: `agentcore invoke` with no errors | any screenshot, e.g. `screenshots/test_1_order_tracking.png` |
+| `MCPClient` connects to the Gateway and loads tools | `:458-463` (inside `invoke()`) |
+| ≥ 2 distinct Gateway-backed tools invoked, well-formed responses | `test_1_order_tracking.png` (`order-tracker`, API-based) and `test_2_refund_processing.png` (`refund-processor`, Lambda-based) |
 
 ### Agent Intelligence
 
-| Criterion | Where to find it |
+| Criterion | Where |
 |---|---|
-| `search_knowledge_base` tool, `@tool` decorator, calls Retrieve, joins chunks, guard clause, docstring | `starter/main.py:261-297` |
-| `get_namespaces` fetches strategy types/namespaces | `starter/main.py:106-122` |
-| `MemoryHook(HookProvider)` with `register_hooks` | `starter/main.py:169-243` |
-| `retrieve_customer_context` — queries namespaces, tags by strategy, prepends to message | `starter/main.py:180-208` |
-| `save_support_interaction` — extracts last turn, calls `create_event()` | `starter/main.py:210-239` |
-| Cross-session recall test log (two sessions, same customer ID) | `starter/screenshots/test_4a_memory_session_A.png` + `test_4b_memory_session_B.png` |
-| `calculate_loyalty_discount` tool, business rules, `code_session(...).invoke("executeCode", ...)` with `clearContext=True`, fallback, structured result (`points_redeemed`, `tier_discount_pct`, `final_total`, `remaining_points`) | `starter/main.py:317-413` |
-| `AgentCoreBrowser` instantiated with region, added to tools list | `starter/main.py:452, 455` |
-| Test output: agent retrieves content from a live page | `starter/screenshots/test_6_browser_tool.png` |
+| `search_knowledge_base` tool: `@tool`, Retrieve, joined chunks, guard clause, docstring | `:261-297` |
+| `get_namespaces` fetches strategy types/namespaces | `:106-122` |
+| `MemoryHook(HookProvider)` with `register_hooks` | `:169-243` |
+| `retrieve_customer_context` — queries namespaces, tags by strategy, prepends to the message | `:180-208` |
+| `save_support_interaction` — extracts the last turn, calls `create_event()` | `:210-239` |
+| Cross-session recall test (two sessions, same customer ID) | `test_4a_memory_session_A.png` + `test_4b_memory_session_B.png` |
+| `calculate_loyalty_discount`: business rules, `code_session(...).invoke("executeCode", ...)` with `clearContext=True`, fallback, structured result | `:317-413` |
+| `AgentCoreBrowser` instantiated with region, added to the tools list | `:452`, `:455` |
+| Test output: agent retrieves content from a live page | `test_6_browser_tool.png` |
 
 ### Code Quality & Reflection
 
-| Criterion | Where to find it |
+| Criterion | Where |
 |---|---|
-| Written reflection, 200-400 words, design decision + challenge + production consideration | [`starter/REFLECTION.md`](./starter/REFLECTION.md) |
-
-### Stand-out suggestions implemented
-
-| Suggestion | Where to find it |
-|---|---|
-| Structured output validation (Pydantic) | `DiscountOutputSchema` in `starter/main.py:317-321`, validated in `calculate_loyalty_discount` |
-| Conversation summarization | `starter/main.py` `invoke()`, message-history truncation block (search `Condensing conversational state`) |
-
-## Submission Checklist
-
-- [x] Completed `main.py` with all TODO sections implemented (no `pass` or `None` placeholders remaining)
-- [x] Screenshots or terminal output for Test 1 — Order Tracking
-- [x] Screenshots or terminal output for Test 2 — Refund Processing
-- [x] Screenshots or terminal output for Test 3 — Knowledge Base (RAG)
-- [x] Screenshots or terminal output for Test 4 — Long-Term Memory (both sessions)
-- [x] Screenshots or terminal output for Test 5 — Loyalty Discount Calculation
-- [x] Screenshots or terminal output for Test 6 — Browser Tool
-- [x] Written reflection (200–400 words) covering a design decision, a challenge, and a production consideration
+| Written reflection, 200–400 words: design decision + challenge + production consideration | [`REFLECTION.md`](REFLECTION.md) |
 
 ---
 
-## Helpful References
+## Submission Checklist
 
-- [Amazon Bedrock AgentCore Documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/agentcore.html)
-- [Strands Agents Documentation](https://strandsagents.com)
-- [MCP Inspector](https://github.com/modelcontextprotocol/inspector)
-- [uv Package Manager](https://docs.astral.sh/uv/)
+- [x] `starter/main.py` — all TODO sections implemented (no `pass` or `None` placeholders)
+- [x] Test 1 — Order Tracking
+- [x] Test 2 — Refund Processing
+- [x] Test 3 — Knowledge Base (RAG)
+- [x] Test 4 — Long-Term Memory (both sessions)
+- [x] Test 5 — Loyalty Discount Calculation
+- [x] Test 6 — Browser Tool
+- [x] Written reflection (200–400 words)
+
+## Study Notes
+
+| | |
+|---|---|
+| [00 Overview](docs/00-overview.md) | [06 Code Interpreter & Browser](docs/06-code-interpreter-and-browser.md) |
+| [01 Setup](docs/01-setup.md) | [07 Entrypoint & deployment](docs/07-entrypoint-and-deployment.md) |
+| [02 Lambda backends](docs/02-lambda-backends.md) | [08 Testing & submission](docs/08-testing-and-submission.md) |
+| [03 Gateway](docs/03-gateway.md) | [09 Stand-out](docs/09-standout.md) |
+| [04 Knowledge Base](docs/04-knowledge-base.md) | [10 Troubleshooting](docs/10-troubleshooting.md) |
+| [05 Memory](docs/05-memory.md) | |
+
+## Clean Up (after grading)
+
+Delete the AgentCore Runtime (`agentcore destroy`), the Gateway, the Memory, the
+Knowledge Base and its S3 bucket, the API Gateway REST API, both Lambda functions and
+the runtime role. Details: [docs/08](docs/08-testing-and-submission.md#clean-up-after-grading).
+
+## References
+
+- [Amazon Bedrock AgentCore](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/) · [Strands Agents](https://strandsagents.com)
+- [MCP Inspector](https://github.com/modelcontextprotocol/inspector) · [uv](https://docs.astral.sh/uv/)
